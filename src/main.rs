@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate mediainfo;
 
 use mediainfo::MediaInfo;
@@ -133,29 +135,34 @@ impl<'a> Display for M3uFileInfo<'a> {
     }
 }
 
+lazy_static! {
+    static ref VALID_AUDIO_FORMATS: HashSet<&'static str> = {
+        let mut result = HashSet::new();
+        result.insert("mp3");
+        result.insert("ogg");
+        result.insert("flac");
+        result.insert("wav");
+        result.insert("m4a");
+        result.insert("wma");
+        result
+    };
+}
+
 fn main() {
     const RECURSE: bool = true;
-
-    let mut valid_audio_formats = HashSet::new();
-    valid_audio_formats.insert("mp3");
-    valid_audio_formats.insert("ogg");
-    valid_audio_formats.insert("flac");
-    valid_audio_formats.insert("wav");
-    valid_audio_formats.insert("m4a");
-
 
     let args = env::args();
     if args.len() > 1 {
         let args = args.skip(1);
         for arg in args {
-            sweep_directory(arg, &valid_audio_formats);
+            sweep_directory(arg);
         }
     } else {
-        sweep_directory(".".to_string(), &valid_audio_formats);
+        sweep_directory(".".to_string());
     }
 
     #[allow(unused_must_use)]
-    fn sweep_directory(directory_path: String, valid_audio_formats: &HashSet<&str>) {
+    fn sweep_directory(directory_path: String) {
         let path_to_search = canonicalize(directory_path);
         if path_to_search.is_err() {
             writeln!(stderr(), "Invalid path:\n\t{:?}", path_to_search.unwrap_err());
@@ -169,9 +176,7 @@ fn main() {
         }
 
         let mut audio_files: Vec<PathBuf> = Vec::new();
-        append_audio_files(&mut audio_files,
-                           &path_to_search,
-                           valid_audio_formats, RECURSE);
+        append_audio_files(&mut audio_files, &path_to_search, RECURSE);
 
         if audio_files.len() == 0 {
             writeln!(stderr(),
@@ -187,7 +192,7 @@ fn main() {
         let write_result = write_m3u_file(&files_info, &path_to_search);
         if write_result.is_err() {
             writeln!(stderr(),
-                     "Failed to write playlist for directories:\n\t{:?}\nError: {:?}",
+                     "Failed to write playlist for directory:\n\t{:?}\nError: {:?}",
                      path_to_search, write_result.unwrap_err());
             return;
         }
@@ -198,8 +203,8 @@ fn main() {
 // because this way the recursion is easy to implement without unnecessary
 // memory and time costs.
 #[allow(unused_must_use)]
-fn append_audio_files(audio_files: &mut Vec<PathBuf>, path_to_search: &PathBuf,
-                      valid_audio_formats: &HashSet<&str>, recurse: bool) {
+fn append_audio_files(audio_files: &mut Vec<PathBuf>,
+                      path_to_search: &PathBuf, recurse: bool) {
     let dir_iterator = read_dir(path_to_search);
     if dir_iterator.is_err() {
         writeln!(stderr(), "Failed to read directory:\n\t{:?}", path_to_search);
@@ -224,14 +229,14 @@ fn append_audio_files(audio_files: &mut Vec<PathBuf>, path_to_search: &PathBuf,
 
         let metadata = metadata.unwrap();
         if metadata.is_dir() && recurse {
-            append_audio_files(audio_files, &file_path, valid_audio_formats, recurse);
-        } else if metadata.is_file() && keep_file(&file_path, valid_audio_formats){
+            append_audio_files(audio_files, &file_path, recurse);
+        } else if metadata.is_file() && keep_file(&file_path){
             audio_files.push(file_path);
         }
     }
 }
 
-fn keep_file(file_path: &PathBuf, valid_audio_formats: &HashSet<&str>) -> bool {
+fn keep_file(file_path: &PathBuf) -> bool {
 
     let extension = file_path.extension();
     if extension.is_none() { return false; }
@@ -240,7 +245,7 @@ fn keep_file(file_path: &PathBuf, valid_audio_formats: &HashSet<&str>) -> bool {
     if extension.is_none() { return false; }
 
     let extension = extension.unwrap();
-    if !valid_audio_formats.contains(extension) { return false; }
+    if !VALID_AUDIO_FORMATS.contains(extension) { return false; }
 
     true
 }
