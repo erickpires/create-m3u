@@ -133,6 +133,8 @@ impl<'a> Display for M3uFileInfo<'a> {
 }
 
 fn main() {
+    const RECURSE: bool = true;
+
     let mut valid_audio_formats = HashSet::new();
     valid_audio_formats.insert("mp3");
     valid_audio_formats.insert("ogg");
@@ -140,26 +142,71 @@ fn main() {
     valid_audio_formats.insert("wav");
     valid_audio_formats.insert("m4a");
 
-    let mut path_to_search;
 
-    let args : Vec<_> = env::args().collect();
-    if args.len() > 1 { path_to_search = args[1].clone(); }
-    else { path_to_search = ".".to_string(); }
+    let args = env::args();
+    if args.len() > 1 {
+        let args = args.skip(1);
+        for arg in args {
+            sweep_directory(arg, &valid_audio_formats);
+        }
+    } else {
+        sweep_directory(".".to_string(), &valid_audio_formats);
+    }
 
-    // TODO(erick): Remove this line!
-    path_to_search = "../../Música/OSTs/Cecile Corbel - Kari-gurashi".to_string();
-    // path_to_search = "/home/erick/Música/OSTs/Cécile Corbel - The Secret World Of Arrietty OST/".to_string();
+    #[allow(unused_must_use)]
+    fn sweep_directory(directory_path: String, valid_audio_formats: &HashSet<&str>) {
+        let path_to_search = canonicalize(directory_path).expect("Invalid path");
+        let mut audio_files: Vec<PathBuf> = Vec::new();
+        append_audio_files(&mut audio_files,
+                           &path_to_search,
+                           valid_audio_formats, RECURSE);
 
-    let path_to_search = canonicalize(path_to_search).expect("Invalid path");
-    let mut audio_files: Vec<PathBuf> = Vec::new();
-    append_audio_files(&mut audio_files, &path_to_search, &valid_audio_formats, true);
+        if audio_files.len() == 0 {
+            writeln!(std::io::stderr(),
+                     "No audio files found at: {:?}", &path_to_search);
+            return;
+        }
 
-    let mut files_info = get_audio_files_info(&audio_files, &path_to_search);
+        let mut files_info = get_audio_files_info(&audio_files, &path_to_search);
 
-    // NOTE(erick): Let's sort the vector to output in a nice order.
-    files_info.sort();
+        // NOTE(erick): Let's sort the vector to output in a nice order.
+        files_info.sort();
 
-    write_m3u_file(&files_info, &path_to_search);
+        write_m3u_file(&files_info, &path_to_search);
+    }
+}
+
+// NOTE(erick): This function appends data to a Vec instead of returning one
+// because this way the recursion is easy to implement without unnecessary
+// memory and time costs.
+fn append_audio_files(audio_files: &mut Vec<PathBuf>, path_to_search: &PathBuf,
+                      valid_audio_formats: &HashSet<&str>, recurse: bool) {
+    let dir_iterator = read_dir(path_to_search).expect("Failed to read directory");
+    for file in dir_iterator {
+        let file = file.expect("Failed to open file");
+        let file_path = file.path();
+        let metadata = file.metadata().expect("Failed to get metadata");
+
+        if metadata.is_dir() && recurse {
+            append_audio_files(audio_files, &file_path, valid_audio_formats, recurse);
+        } else if metadata.is_file() && keep_file(&file_path, valid_audio_formats){
+            audio_files.push(file_path);
+        }
+    }
+}
+
+fn keep_file(file_path: &PathBuf, valid_audio_formats: &HashSet<&str>) -> bool {
+
+    let extension = file_path.extension();
+    if extension.is_none() { return false; }
+
+    let extension = extension.unwrap().to_str();
+    if extension.is_none() { return false; }
+
+    let extension = extension.unwrap();
+    if !valid_audio_formats.contains(extension) { return false; }
+
+    true
 }
 
 fn get_audio_files_info<'a>(audio_files: &'a Vec<PathBuf>,
@@ -251,34 +298,4 @@ fn write_m3u_file(files_info: &Vec<M3uFileInfo>, path_to_search: &PathBuf) {
         m3u_file.write_all(path_str.as_bytes()).expect("Failed to write file.");
         m3u_file.write_all(b"\n").expect("Failed to write file.");
     }
-}
-
-fn append_audio_files(audio_files: &mut Vec<PathBuf>, path_to_search: &PathBuf,
-                      valid_audio_formats: &HashSet<&str>, recurse: bool) {
-    let dir_iterator = read_dir(path_to_search).expect("Failed to read directory");
-    for file in dir_iterator {
-        let file = file.expect("Failed to open file");
-        let file_path = file.path();
-        let metadata = file.metadata().expect("Failed to get metadata");
-
-        if metadata.is_dir() && recurse {
-            append_audio_files(audio_files, &file_path, valid_audio_formats, recurse);
-        } else if metadata.is_file() && keep_file(&file_path, valid_audio_formats){
-            audio_files.push(file_path);
-        }
-    }
-}
-
-fn keep_file(file_path: &PathBuf, valid_audio_formats: &HashSet<&str>) -> bool {
-
-    let extension = file_path.extension();
-    if extension.is_none() { return false; }
-
-    let extension = extension.unwrap().to_str();
-    if extension.is_none() { return false; }
-
-    let extension = extension.unwrap();
-    if !valid_audio_formats.contains(extension) { return false; }
-
-    true
 }
