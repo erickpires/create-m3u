@@ -17,6 +17,7 @@ use std::fs::read_dir;
 use std::fs::canonicalize;
 use std::io::Write;
 
+use std::io::stderr;
 use std::env;
 
 #[derive(Debug)]
@@ -155,14 +156,25 @@ fn main() {
 
     #[allow(unused_must_use)]
     fn sweep_directory(directory_path: String, valid_audio_formats: &HashSet<&str>) {
-        let path_to_search = canonicalize(directory_path).expect("Invalid path");
+        let path_to_search = canonicalize(directory_path);
+        if path_to_search.is_err() {
+            writeln!(stderr(), "Invalid path:\n\t{:?}", path_to_search.unwrap_err());
+            return;
+        }
+
+        let path_to_search = path_to_search.unwrap();
+        if !path_to_search.is_dir() {
+            writeln!(stderr(), "Path is not a directory:\n\t{:?}", path_to_search);
+            return;
+        }
+
         let mut audio_files: Vec<PathBuf> = Vec::new();
         append_audio_files(&mut audio_files,
                            &path_to_search,
                            valid_audio_formats, RECURSE);
 
         if audio_files.len() == 0 {
-            writeln!(std::io::stderr(),
+            writeln!(stderr(),
                      "No audio files found at: {:?}", &path_to_search);
             return;
         }
@@ -172,21 +184,45 @@ fn main() {
         // NOTE(erick): Let's sort the vector to output in a nice order.
         files_info.sort();
 
-        write_m3u_file(&files_info, &path_to_search);
+        let write_result = write_m3u_file(&files_info, &path_to_search);
+        if write_result.is_err() {
+            writeln!(stderr(),
+                     "Failed to write playlist for directories:\n\t{:?}\nError: {:?}",
+                     path_to_search, write_result.unwrap_err());
+            return;
+        }
     }
 }
 
 // NOTE(erick): This function appends data to a Vec instead of returning one
 // because this way the recursion is easy to implement without unnecessary
 // memory and time costs.
+#[allow(unused_must_use)]
 fn append_audio_files(audio_files: &mut Vec<PathBuf>, path_to_search: &PathBuf,
                       valid_audio_formats: &HashSet<&str>, recurse: bool) {
-    let dir_iterator = read_dir(path_to_search).expect("Failed to read directory");
-    for file in dir_iterator {
-        let file = file.expect("Failed to open file");
-        let file_path = file.path();
-        let metadata = file.metadata().expect("Failed to get metadata");
+    let dir_iterator = read_dir(path_to_search);
+    if dir_iterator.is_err() {
+        writeln!(stderr(), "Failed to read directory:\n\t{:?}", path_to_search);
+        return;
+    }
 
+    let dir_iterator = dir_iterator.unwrap();
+    for file in dir_iterator {
+        let file = file;
+        if file.is_err() {
+            writeln!(stderr(), "Could not reach file:\n\t{:?}", file.unwrap_err());
+            return;
+        }
+
+        let file = file.unwrap();
+        let file_path = file.path();
+        let metadata = file.metadata();
+        if metadata.is_err() {
+            writeln!(stderr(), "Failed to get metadata for file:\n\t{:?}", file);
+            return;
+        }
+
+        let metadata = metadata.unwrap();
         if metadata.is_dir() && recurse {
             append_audio_files(audio_files, &file_path, valid_audio_formats, recurse);
         } else if metadata.is_file() && keep_file(&file_path, valid_audio_formats){
@@ -229,31 +265,32 @@ fn get_audio_files_info<'a>(audio_files: &'a Vec<PathBuf>,
         let mut file_info = M3uFileInfo::new(file_path);
 
         let path_as_str = audio_file.to_str();
-        if path_as_str.is_some() {
-            let path_as_str = path_as_str.unwrap();
-            mediainfo.open(path_as_str);
-            let artist = mediainfo.get_performer();
-            let track_name = mediainfo.get_title();
-            let duration = mediainfo.get_duration_ms();
-            let track_number = mediainfo.get_track_number();
-            let album = mediainfo.get_album();
+        if path_as_str.is_none() { continue; }
 
-            if artist.len() != 0 { file_info.add_artist(artist); }
-            if album.len() != 0 { file_info.add_album(album); }
-            if track_name.len() != 0 { file_info.add_title(track_name); }
-            if let Some(ms) = duration { file_info.add_duration(ms / 1000); }
-            if let Some(num) = track_number { file_info.add_track_number(num); }
+        let path_as_str = path_as_str.unwrap();
+        mediainfo.open(path_as_str);
 
-            mediainfo.close();
-        }
+        let artist = mediainfo.get_performer();
+        let track_name = mediainfo.get_title();
+        let duration = mediainfo.get_duration_ms();
+        let track_number = mediainfo.get_track_number();
+        let album = mediainfo.get_album();
 
+        if artist.len() != 0 { file_info.add_artist(artist); }
+        if album.len() != 0 { file_info.add_album(album); }
+        if track_name.len() != 0 { file_info.add_title(track_name); }
+        if let Some(ms) = duration { file_info.add_duration(ms / 1000); }
+        if let Some(num) = track_number { file_info.add_track_number(num); }
+
+        mediainfo.close();
         files_info.push(file_info);
     }
 
     files_info
 }
 
-fn write_m3u_file(files_info: &Vec<M3uFileInfo>, path_to_search: &PathBuf) {
+fn write_m3u_file(files_info: &Vec<M3uFileInfo>, path_to_search: &PathBuf)
+                  -> Result<(), std::io::Error> {
     // NOTE(erick): Tries to create a name for the m3u file based on
     // the directory been searched. Falls back to 'playlist.m3u'
     // otherwise
@@ -268,10 +305,10 @@ fn write_m3u_file(files_info: &Vec<M3uFileInfo>, path_to_search: &PathBuf) {
     }
 
     let m3u_file_path = path_to_search.join(playlist_filename.as_str());
-    let mut m3u_file = File::create(m3u_file_path).expect("Could not open output file");
+    let mut m3u_file = File::create(m3u_file_path)?;
 
     // Write the M3U file header
-    m3u_file.write_all(b"#EXTM3U\n").expect("Failed to write file.");
+    m3u_file.write_all(b"#EXTM3U\n")?;
 
     for file_info in files_info {
         let path_str = file_info.path.to_str();
@@ -289,13 +326,14 @@ fn write_m3u_file(files_info: &Vec<M3uFileInfo>, path_to_search: &PathBuf) {
                 m3u_file.write_fmt(format_args!("#EXTINF:{},{} - {}\n",
                                                 duration.unwrap(),
                                                 artist.as_ref().unwrap(),
-                                                track_title.as_ref().unwrap()))
-                    .expect("Failed to write file.");;
+                                                track_title.as_ref().unwrap()))?;
             }
 
         // Write the path followed by a newline.
         let path_str = path_str.unwrap();
-        m3u_file.write_all(path_str.as_bytes()).expect("Failed to write file.");
-        m3u_file.write_all(b"\n").expect("Failed to write file.");
+        m3u_file.write_all(path_str.as_bytes())?;
+        m3u_file.write_all(b"\n")?;
     }
+
+    Ok( () )
 }
