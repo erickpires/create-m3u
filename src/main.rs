@@ -87,28 +87,42 @@ impl<'a> PartialOrd for M3uFileInfo<'a> {
 
 impl<'a> Ord for M3uFileInfo<'a> {
     fn cmp(&self, rhs: &M3uFileInfo<'a>) -> Ordering {
-        if self == rhs { return Ordering::Equal; }
+        let album_cmp = compare_options(&self.album, &rhs.album);
+        match album_cmp {
+            Some(cmp) => { if cmp != Ordering::Equal { return cmp; } },
+            None      => { },
+        }
 
-        let artist_cmp = self.artist.cmp(&rhs.artist);
-        if artist_cmp != Ordering::Equal { return artist_cmp; }
+        let number_cmp = compare_options(&self.track_number, &rhs.track_number);
+        match number_cmp {
+            Some(cmp) => { if cmp != Ordering::Equal { return cmp; } },
+            None      => { },
+        }
 
-        let album_cmp = self.album.cmp(&rhs.album);
-        if album_cmp != Ordering::Equal { return album_cmp; }
+        let artist_cmp = compare_options(&self.artist, &rhs.artist);
+        match artist_cmp {
+            Some(cmp) => { if cmp != Ordering::Equal { return cmp; } },
+            None      => { },
+        }
 
-        let number_cmp = self.track_number.cmp(&rhs.track_number);
-        if number_cmp != Ordering::Equal { return number_cmp; }
-
-        let title_cmp = self.title.cmp(&rhs.title);
-        if title_cmp != Ordering::Equal { return title_cmp; }
-
-        let duration_cmp = self.duration_in_secs.cmp(&rhs.duration_in_secs);
-        if duration_cmp != Ordering::Equal { return duration_cmp; }
-
-        let path_cmp = self.path.cmp(&rhs.path);
-        if path_cmp != Ordering::Equal { return path_cmp; }
-
-        Ordering::Equal
+        // NOTE(erick): It does not make a lot of sense to order
+        // musics by title or duration, so we ignore this parameters.
+        self.path.cmp(&rhs.path)
     }
+}
+
+// NOTE(erick): Options are Ord but this trait is derived
+// and make a lexicographic comparison, e.g. if op1 is None
+// and op2 is Some, 'op1.cmp(&op2)' yields Ordering::Less.
+// We don't want this behaviour, so this function implements
+// what should be the implementation of PartialOrd for Option.
+fn compare_options<T>(op1: &Option<T>, op2: &Option<T>)
+                      -> Option<Ordering> where T: Ord {
+    if op1.is_some() && op2.is_some() {
+        return Some(op1.as_ref().unwrap().cmp(op2.as_ref().unwrap()));
+    }
+
+    None
 }
 
 impl<'a> Display for M3uFileInfo<'a> {
