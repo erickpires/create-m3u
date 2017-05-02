@@ -264,6 +264,7 @@ fn keep_file(file_path: &PathBuf) -> bool {
     true
 }
 
+#[allow(unused_must_use)]
 fn get_audio_files_info<'a>(audio_files: &'a Vec<PathBuf>,
                         path_to_search: &'a PathBuf) -> Vec<M3uFileInfo<'a > > {
     let mut mediainfo = MediaInfo::new();
@@ -287,7 +288,11 @@ fn get_audio_files_info<'a>(audio_files: &'a Vec<PathBuf>,
         if path_as_str.is_none() { continue; }
 
         let path_as_str = path_as_str.unwrap();
-        mediainfo.open(path_as_str);
+        let mediainfo_result = mediainfo.open(path_as_str);
+        if mediainfo_result.is_err() {
+            writeln!(stderr(), "MediaInfo could not open file:\n\t{:?}", path_as_str);
+            continue;
+        }
 
         let artist = mediainfo.get_performer();
         let track_name = mediainfo.get_title();
@@ -295,11 +300,11 @@ fn get_audio_files_info<'a>(audio_files: &'a Vec<PathBuf>,
         let track_number = mediainfo.get_track_number();
         let album = mediainfo.get_album();
 
-        if artist.len() != 0 { file_info.add_artist(artist); }
-        if album.len() != 0 { file_info.add_album(album); }
-        if track_name.len() != 0 { file_info.add_title(track_name); }
-        if let Some(ms) = duration { file_info.add_duration(ms / 1000); }
-        if let Some(num) = track_number { file_info.add_track_number(num); }
+        if artist.is_ok()       { file_info.add_artist(artist.unwrap()); }
+        if album.is_ok()        { file_info.add_album(album.unwrap()); }
+        if track_name.is_ok()   { file_info.add_title(track_name.unwrap()); }
+        if duration.is_ok()     { file_info.add_duration(duration.unwrap() / 1000); }
+        if track_number.is_ok() { file_info.add_track_number(track_number.unwrap()); }
 
         mediainfo.close();
         files_info.push(file_info);
